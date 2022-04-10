@@ -666,7 +666,7 @@
             contract.addGameStateListener(state => applyGameState(state));
 
             if (params.has('gameId')) {
-                const id = parseInt(params.get('gameId'));
+                const id = params.get('gameId');
                 contract.loadGame(id).then(game => {
                     boardEl.removeAttribute('disabled');
                     applyGameState(game);
