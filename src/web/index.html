@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TicTacToe</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootswatch@4.5.2/dist/spacelab/bootstrap.min.css"
+        integrity="sha384-F1AY0h4TrtJ8OCUQYOzhcFzUTxSOxuaaJ4BeagvyQL8N9mE4hrXjdDsNx249NpEc" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-ka7Sk0Gln4gmtz2MlQnikT1wXgYsOg+OMhuP+IlRH9sENBO0LRn5q+8nbTov4+1p"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bignumber.js@9.0.2/bignumber.js"
+        integrity="sha256-wVL1BH6h7i/pod41XKpG/h1lPY7y6h2iR5INy5ikXvs=" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.7.1/dist/web3.min.js"></script>
+    <script>
+        const contractAbi = [
+            {
+                "anonymous": false,
+                "inputs": [
+                    {
+                        "indexed": false,
+                        "internalType": "uint64",
+                        "name": "id",
+                        "type": "uint64"
+                    },
+                    {
+                        "indexed": true,
+                        "internalType": "address",
+                        "name": "crosses",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": true,
+                        "internalType": "address",
+                        "name": "circles",
+                        "type": "address"
+                    }
+                ],
+                "name": "GameCreated",
+                "type": "event"
+            },
+            {
+                "anonymous": false,
+                "inputs": [
+                    {
+                        "indexed": true,
+                        "internalType": "uint64",
+                        "name": "id",
+                        "type": "uint64"
+                    },
+                    {
+                        "indexed": false,
+                        "internalType": "uint32",
+                        "name": "board",
+                        "type": "uint32"
+                    }
+                ],
+                "name": "GameState",
+                "type": "event"
+            },
+            {
+                "inputs": [
+                    {
+                        "internalType": "uint64",
+                        "name": "id",
+                        "type": "uint64"
+                    },
+                    {
+                        "internalType": "uint8",
+                        "name": "position",
+                        "type": "uint8"
+                    }
+                ],
+                "name": "add_circle",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {
+                        "internalType": "uint64",
+                        "name": "id",
+                        "type": "uint64"
+                    },
+                    {
+                        "internalType": "uint8",
+                        "name": "position",
+                        "type": "uint8"
+                    }
+                ],
+                "name": "add_cross",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {
+                        "internalType": "uint64",
+                        "name": "id",
+                        "type": "uint64"
+                    },
+                    {
+                        "internalType": "address",
+                        "name": "circles",
+                        "type": "address"
+                    }
+                ],
+                "name": "create_game",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [
+                    {
+                        "internalType": "uint64",
+                        "name": "",
+                        "type": "uint64"
+                    }
+                ],
+                "name": "games",
+                "outputs": [
+                    {
+                        "internalType": "uint32",
+                        "name": "board",
+                        "type": "uint32"
+                    },
+                    {
+                        "internalType": "address",
+                        "name": "crosses",
+                        "type": "address"
+                    },
+                    {
+                        "internalType": "address",
+                        "name": "circles",
+                        "type": "address"
+                    }
+                ],
+                "stateMutability": "view",
+                "type": "function"
+            }
+        ]
+        const contractAddress = "0x8334b4ceb6ae1eDC435789B3Aa0c18bCfB2938f4";
+
+        class TicTacToeContractWrapper {
+            #web3;
+            #contract;
+            #account;
+            #gameId;
+            #listeners;
+
+            constructor() {
+                this.#web3 = new Web3(Web3.givenProvider);
+                this.#contract = new this.#web3.eth.Contract(contractAbi, contractAddress);
+                this.#listeners = [];
+            }
+
+            #generateRandom128Bits() {
+                const randomArray = new Uint8Array(15);
+                crypto.getRandomValues(randomArray);
+                let result = new BigNumber(0);
+                for (let i = 0; i < 14; i++) {
+                    result = result.plus(randomArray[i]);
+                    result = result.multipliedBy(256);
+                }
+                result = result.plus(randomArray[14]);
+                return result;
+            }
+
+            #getAccount() {
+                if (this.#account) {
+                    return Promise.resolve(this.#account);
+                }
+                return this.#getAccountCore().then(account => {
+                    this.#account = account;
+                    return account;
+                });
+            }
+
+            #getAccountCore() {
+                return this.#web3.eth.getAccounts().then(accounts => {
+                    if (accounts.length === 0) {
+                        return this.#web3.eth.requestAccounts().then(accounts2 => {
+                            if (accounts2.length === 0) {
+                                throw new Error('no-accounts');
+                            }
+                            return accounts2[0];
+                        });
+                    } else {
+                        return accounts[0];
+                    }
+                });
+            }
+
+            createNewGame(circlesAddress) {
+                this.#gameId = this.#generateRandom128Bits();
+
+                const call = this.#contract.methods.create_game(this.#gameId, circlesAddress);
+                return this.#getAccount()
+                    .then(account => call.send({ from: account }))
+                    .then(receipt => ({ ...receipt, gameId: this.#gameId }));
+            }
+
+            loadGame(id) {
+                this.#gameId = new BigNumber(id);
+                this.#contract.events.GameState({
+                    filter: {
+                        gameId: this.#gameId,
+                        fromBlock: 'latest',
+                    }
+                }, (error, event) => {
+                    const { board, circles, crosses } = event.returnValues;
+                    const { transactionHash } = event;
+                    this.#invokeGameStateListeners({ board, circles, crosses, transactionHash });
+                });
+                return this.#getAccount()
+                    .then(account => this.#contract.methods.games(this.#gameId).call({ from: account }))
+                    .then(game => {
+                        const { board, circles, crosses } = game;
+                        this.#invokeGameStateListeners({ board, circles, crosses });
+                        return { ...game, account: this.#account };
+                    });
+            }
+
+            #invokeGameStateListeners(event) {
+                for (const listener of this.#listeners) {
+                    listener(event);
+                }
+            }
+
+            addMove(position, turn) {
+                return this.#getAccount().then(account => {
+                    return this.#contract.methods[`add_${turn}`](this.#gameId, position).send({
+                        from: account,
+                    });
+                });
+            }
+
+            addGameStateListener(listener) {
+                this.#listeners.push(listener);
+            }
+
+            removeGameStateListener(listener) {
+                const index = this.#listeners.indexof(listener);
+                if (index !== -1) {
+                    this.#listeners.splice(index, 1);
+                }
+            }
+        }
+
+
+        class TicTacToeField extends HTMLElement {
+            #content;
+
+            constructor() {
+                super();
+                const template = document.getElementById('tic-tac-toe-field')
+                const shadowRoot = this.attachShadow({ mode: 'open' });
+                const content = template.content.cloneNode(true);
+                shadowRoot.appendChild(content);
+                this.#content = shadowRoot.firstElementChild;
+            }
+
+            connectedCallback() {
+                if (this.attributes.index) {
+                    this.#setBorders(parseInt(this.attributes.index.value));
+                }
+                if (this.attributes.value) {
+                    this.#setContent(this.attributes.value.value);
+                }
+            }
+
+            static get observedAttributes() {
+                return ['index', 'value', 'disabled'];
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                if (name === 'index') {
+                    this.#content.classList.remove('bt');
+                    this.#content.classList.remove('bl');
+                    this.#content.classList.remove('br');
+                    this.#content.classList.remove('bb');
+
+                    const index = parseInt(newValue);
+                    this.#setBorders(index);
+                } else if (name === 'value') {
+                    this.#setContent(newValue);
+                } else if (name === 'disabled') {
+                    this.#content.setAttribute('disabled', newValue);
+                }
+            }
+
+            #setBorders(index) {
+                if (index > 2) {
+                    this.#content.classList.add('bt');
+                }
+                if (index < 6) {
+                    this.#content.classList.add('bb');
+                }
+                if (![2, 5, 8].includes(index)) {
+                    this.#content.classList.add('br');
+                }
+                if (![0, 3, 6].includes(index)) {
+                    this.#content.classList.add('bl');
+                }
+            }
+
+            #setContent(value) {
+                if (value === "cross") {
+                    this.#content.innerText = "❌";
+                } else if (value === "circle") {
+                    this.#content.innerText = "⭕️";
+                } else {
+                    this.#content.innerText = "";
+                }
+            }
+        }
+
+        class TicTacToeBoard extends HTMLElement {
+            #turn;
+            #fields;
+
+            constructor() {
+                super();
+                const template = document.getElementById('tic-tac-toe-board');
+                const shadowRoot = this.attachShadow({ mode: 'open' });
+                const content = template.content.cloneNode(true);
+
+                this.#fields = [];
+                for (let x = 0; x < 3; x++) {
+                    const row = document.createElement('row')
+                    for (let y = 0; y < 3; y++) {
+                        const field = document.createElement('tic-tac-toe-field');
+                        const index = x * 3 + y;
+                        field.setAttribute('index', index);
+                        field.addEventListener('click', () => this.fieldClicked(index));
+                        row.appendChild(field);
+                        this.#fields[index] = field;
+                    }
+                    content.appendChild(row);
+                }
+                shadowRoot.appendChild(content);
+            }
+
+            connectedCallback() {
+                this.#turn = "cross";
+            }
+
+            static get observedAttributes() {
+                return ['disabled', 'board'];
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                if (name === 'disabled') {
+                    for (const field of this.#fields) {
+                        field.setAttribute('disabled', newValue);
+                    }
+                } else if (name === 'board') {
+                    if (typeof newValue !== 'string' || newValue.length !== 9) {
+                        return;
+                    }
+                    let crosses = 0;
+                    let circles = 0;
+                    for (let i = 0; i < 9; i++) {
+                        const c = newValue.charAt(i);
+                        if (c === 'x') {
+                            this.#fields[i].setAttribute('value', 'cross');
+                            crosses++;
+                        } else if (c === 'o') {
+                            this.#fields[i].setAttribute('value', 'circle');
+                            circles++;
+                        } else {
+                            this.#fields[i].removeAttribute('value');
+                        }
+                    }
+                    if (circles >= crosses) {
+                        this.#turn = 'circle';
+                    } else {
+                        this.#turn = 'cross';
+                    }
+                    this.#checkGameOver();
+                    this.#switchTurn();
+                }
+            }
+
+            fieldClicked(index) {
+                if (this.hasAttribute('disabled')) {
+                    return;
+                }
+                if (this.#fields[index].hasAttribute('value')) {
+                    return;
+                }
+
+                this.#fields[index].setAttribute('value', this.#turn);
+                const previousTurn = this.#turn;
+
+                this.#checkGameOver();
+                this.#switchTurn();
+                this.dispatchEvent(new CustomEvent('move', {
+                    composed: true,
+                    detail: {
+                        index,
+                        turn: previousTurn,
+                        newTurn: this.#turn,
+                    },
+                }));
+            }
+
+            #switchTurn() {
+                if (this.#turn === 'cross') {
+                    this.#turn = 'circle';
+                } else if (this.#turn === 'circle') {
+                    this.#turn = 'cross';
+                }
+            }
+
+            #checkGameOver() {
+                const horizontals = [
+                    [0, 1, 2],
+                    [3, 4, 5],
+                    [6, 7, 8],
+                ];
+                const verticals = [
+                    [0, 3, 6],
+                    [1, 4, 7],
+                    [2, 5, 8],
+                ];
+                const diagonals = [
+                    [0, 4, 8],
+                    [2, 4, 6],
+                ];
+                const lines = [
+                    ...horizontals,
+                    ...verticals,
+                    ...diagonals,
+                ];
+
+                lineIterator:
+                for (const line of lines) {
+                    for (const index of line) {
+                        if (this.#fields[index].getAttribute('value') !== this.#turn) {
+                            continue lineIterator;
+                        }
+                    }
+                    this.setAttribute('disabled', 'true');
+                    this.dispatchEvent(new CustomEvent('gameOver', {
+                        composed: true,
+                        detail: {
+                            turn: this.#turn,
+                        }
+                    }));
+                    return;
+                }
+            }
+        }
+
+        class CreateNewGameDialog extends HTMLElement {
+            // TODO implement CreateNewGameDialog
+        }
+
+        class ErrorLogItem extends HTMLElement {
+            #shadowRoot;
+
+            constructor() {
+                super();
+                const template = document.getElementById('error-log-item');
+                const content = template.content.cloneNode(true);
+                this.#shadowRoot = this.attachShadow({ mode: 'open' });
+                this.#shadowRoot.appendChild(content);
+            }
+
+            static get observedAttributes() {
+                return ['text'];
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                if (name === 'text') {
+                    this.#shadowRoot.querySelector('li').innerText = newValue;
+                }
+            }
+        }
+
+        class TxLogItem extends HTMLElement {
+            #shadowRoot;
+
+            constructor() {
+                super();
+                const template = document.getElementById('tx-log-item');
+                const content = template.content.cloneNode(true);
+                this.#shadowRoot = this.attachShadow({ mode: 'open' });
+                this.#shadowRoot.appendChild(content);
+            }
+
+            static get observedAttributes() {
+                return ['text', 'txid'];
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                if (name === 'text') {
+                    this.#shadowRoot.querySelector('span').innerText = newValue;
+                } else if (name === 'txid') {
+                    const a = this.#shadowRoot.querySelector('a');
+                    a.innerText = 'View on Snowtrace';
+                    a.href = `https://testnet.snowtrace.io/tx/${newValue}`;
+                }
+            }
+        }
+
+        function addTxLog(receipt) {
+            const log = document.getElementById('tx-log');
+            const item = document.createElement('tx-log-item');
+            const { transactionHash } = receipt;
+            if (transactionHash) {
+                item.setAttribute('text', 'game state changed');
+                item.setAttribute('txid', receipt.transactionHash);
+            } else {
+                item.setAttribute('text', 'game loaded');
+            }
+            log.prepend(item);
+        }
+
+        function addErrorLog(error) {
+            const log = document.getElementById('tx-log');
+            const item = document.createElement('error-log-item');
+            item.setAttribute('text', error.message);
+            log.prepend(item);
+        }
+
+        function transformBoardFromUInt32ToString(board) {
+            let str = '';
+            for (let i = 0; i < 9; i++) {
+                const value = (board >> (i * 2)) & 3;
+                if (value === 0) {
+                    str += '_';
+                } else if (value === 1) {
+                    str += 'x';
+                } else if (value === 2) {
+                    str += 'o';
+                }
+            }
+            return str;
+        }
+
+        function setAccountField(name, value, account) {
+            const el = document.getElementById(`${name}Address`);
+            if (account === value) {
+                el.innerText = 'you :)';
+                el.classList.add('text-success');
+            } else {
+                el.innerText = value;
+                el.classList.remove('text-success');
+            }
+        }
+
+        function applyGameState(game) {
+            const boardEl = document.querySelector('tic-tac-toe-board');
+            const { board, circles, crosses, account } = game;
+            if (parseInt(circles) === 0 && parseInt(crosses) === 0) {
+                boardEl.setAttribute('disabled', 'true');
+                document.getElementById('game-msg').innerText = 'Looks like this game does not exist :(';
+                return;
+            }
+            if (circles && crosses && account) {
+                setAccountField('crosses', crosses, account);
+                setAccountField('circles', circles, account);
+            }
+            if (board) {
+                boardEl.setAttribute('board', transformBoardFromUInt32ToString(board));
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            customElements.define('tic-tac-toe-board', TicTacToeBoard);
+            customElements.define('tic-tac-toe-field', TicTacToeField);
+            customElements.define('error-log-item', ErrorLogItem);
+            customElements.define('tx-log-item', TxLogItem);
+            customElements.define('create-new-game-dialog', CreateNewGameDialog);
+
+            const mainEl = document.querySelector('main');
+            const params = new URLSearchParams(location.search);
+            const contract = new TicTacToeContractWrapper();
+
+            const boardEl = document.querySelector('tic-tac-toe-board');
+            boardEl.setAttribute('disabled', 'true');
+            boardEl.addEventListener('move', event => {
+                const { turn, newTurn } = event.detail;
+                document.getElementById('game-msg').innerText = `current turn: ${newTurn}`;
+
+                boardEl.setAttribute('disabled', 'true');
+                contract.addMove(event.detail.index, turn).then(receipt => {
+                    boardEl.removeAttribute('disabled');
+                }).catch(error => {
+                    addErrorLog(error);
+                });
+            });
+            boardEl.addEventListener('gameOver', event => {
+                const { turn } = event.detail;
+                document.getElementById('game-msg').innerText = `game over, winner: ${turn}`;
+                boardEl.setAttribute('disabled', 'true');
+            });
+
+            contract.addGameStateListener(state => addTxLog(state));
+            contract.addGameStateListener(state => applyGameState(state));
+
+            if (params.has('gameId')) {
+                const id = parseInt(params.get('gameId'));
+                contract.loadGame(id).then(game => {
+                    boardEl.removeAttribute('disabled');
+                    applyGameState(game);
+                });
+            } else {
+                const createNewGameDialog = document.createElement('create-new-game-dialog');
+                mainEl.appendChild(createNewGameDialog);
+                createNewGameDialog.addEventListener('submitted', event => {
+                    createNewGameDialog.setAttribute('state', 'loading');
+                    contract.createNewGame(event.detail.circlesAddress).then(({ gameId }) => {
+                        createNewGameDialog.setAttribute('state', 'finished');
+                        createNewGameDialog.setAttribute('game-id', gameId);
+                        boardEl.removeAttribute('disabled');
+                    });
+                });
+                createNewGameDialog.addEventListener('closed', () => {
+                    mainEl.removeChild(createNewGameDialog);
+                });
+            }
+        });
+    </script>
+</head>
+
+<body>
+    <header>
+        <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="#">TicTacToe</a>
+                <div class="justify-content-end" id="navbarColor02">
+                    <ul class="navbar-nav me-auto">
+                        <li class="nav-item">
+                            <a class="nav-link" href="https://jfhr.de">made with &lt;3 by jfhr</a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <main class="container my-3">
+        <div class="row">
+            <div class="col-12 col-lg-6 my-3">
+                <div class="card bg-light">
+                    <div class="card-header">
+                        <b id="game-msg"></b>
+                    </div>
+                    <div class="card-body m-auto">
+                        <tic-tac-toe-board></tic-tac-toe-board>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-lg-6 my-3">
+                <div class="card bg-light mb-3">
+                    <div class="card-body">
+                        <p>crosses: <span id="crossesAddress"></span></p>
+                        <p>circles: <span id="circlesAddress"></span></p>
+                    </div>
+                </div>
+                <ul class="list-group" id="tx-log">
+                </ul>
+            </div>
+        </div>
+    </main>
+
+    <template id="tx-log-item">
+        <li>
+            <span></span>
+            <a target="_blank"></a>
+        </li>
+        <style>
+            li {
+                position: relative;
+                display: block;
+                padding: 0.75rem 1.25rem;
+
+                border: 1px solid rgba(0, 0, 0, 0.125);
+
+                text-overflow: ellipsis;
+                word-wrap: break-word;
+                overflow: hidden;
+            }
+        </style>
+    </template>
+
+    <template id="error-log-item">
+        <li></li>
+        <style>
+            li {
+                position: relative;
+                display: block;
+                padding: 0.75rem 1.25rem;
+
+                color: #6b0100;
+                background-color: #f1b8b8;
+
+                border: 1px solid rgba(0, 0, 0, 0.125);
+
+                text-overflow: ellipsis;
+                word-wrap: break-word;
+                overflow: hidden;
+            }
+        </style>
+    </template>
+
+    <template id="create-new-game-dialog">
+    </template>
+
+    <template id="tic-tac-toe-board">
+        <style>
+            row {
+                display: flex;
+                flex-direction: row;
+                width: 304px;
+            }
+        </style>
+    </template>
+
+    <template id="tic-tac-toe-field">
+        <div></div>
+        <style>
+            div {
+                width: 96px;
+                height: 96px;
+
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 80px;
+
+                border: 0 solid black;
+
+                user-select: none;
+            }
+
+            div:hover {
+                background-color: lightblue;
+            }
+
+            div[disabled="true"] {
+                border-color: darkgray;
+            }
+
+            div[disabled="true"]:hover {
+                background-color: unset;
+            }
+
+            .bt {
+                border-top-width: 4px
+            }
+
+            .bl {
+                border-left-width: 4px
+            }
+
+            .br {
+                border-right-width: 4px
+            }
+
+            .bb {
+                border-bottom-width: 4px
+            }
+        </style>
+    </template>
+</body>
+
+</html>
