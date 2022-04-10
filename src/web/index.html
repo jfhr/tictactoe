@@ -320,7 +320,6 @@
         }
 
         class TicTacToeBoard extends HTMLElement {
-            #turn;
             #fields;
 
             constructor() {
@@ -346,7 +345,7 @@
             }
 
             connectedCallback() {
-                this.#turn = "cross";
+                this.setAttribute('turn', 'cross');
             }
 
             static get observedAttributes() {
@@ -377,9 +376,9 @@
                         }
                     }
                     if (circles >= crosses) {
-                        this.#turn = 'circle';
+                        this.setAttribute('turn', 'circle');
                     } else {
-                        this.#turn = 'cross';
+                        this.setAttribute('turn', 'cross');
                     }
                     this.#checkGameOver();
                     this.#switchTurn();
@@ -394,8 +393,8 @@
                     return;
                 }
 
-                this.#fields[index].setAttribute('value', this.#turn);
-                const previousTurn = this.#turn;
+                const previousTurn = this.getAttribute('turn');
+                this.#fields[index].setAttribute('value', previousTurn);
 
                 this.#checkGameOver();
                 this.#switchTurn();
@@ -404,16 +403,16 @@
                     detail: {
                         index,
                         turn: previousTurn,
-                        newTurn: this.#turn,
+                        newTurn: this.getAttribute('turn'),
                     },
                 }));
             }
 
             #switchTurn() {
-                if (this.#turn === 'cross') {
-                    this.#turn = 'circle';
-                } else if (this.#turn === 'circle') {
-                    this.#turn = 'cross';
+                if (this.getAttribute('turn') === 'circle') {
+                    this.setAttribute('turn', 'cross');
+                } else {
+                    this.setAttribute('turn', 'circle');
                 }
             }
 
@@ -441,15 +440,16 @@
                 lineIterator:
                 for (const line of lines) {
                     for (const index of line) {
-                        if (this.#fields[index].getAttribute('value') !== this.#turn) {
+                        if (this.#fields[index].getAttribute('value') !== this.getAttribute('turn')) {
                             continue lineIterator;
                         }
                     }
                     this.setAttribute('disabled', 'true');
+                    this.setAttribute('gameover', 'true');
                     this.dispatchEvent(new CustomEvent('gameOver', {
                         composed: true,
                         detail: {
-                            turn: this.#turn,
+                            turn: this.getAttribute('turn'),
                         }
                     }));
                     return;
@@ -617,10 +617,11 @@
 
         function applyGameState(game) {
             const boardEl = document.querySelector('tic-tac-toe-board');
+            const msgEl = document.getElementById('game-msg');
             const { board, circles, crosses, account } = game;
             if (parseInt(circles) === 0 && parseInt(crosses) === 0) {
                 boardEl.setAttribute('disabled', 'true');
-                document.getElementById('game-msg').innerText = 'Looks like this game does not exist :(';
+                msgEl.innerText = 'looks like this game does not exist :(';
                 return;
             }
             if (circles && crosses && account) {
@@ -629,6 +630,9 @@
             }
             if (board) {
                 boardEl.setAttribute('board', transformBoardFromUInt32ToString(board));
+                if (!boardEl.hasAttribute('gameover')) {
+                    msgEl.innerText = `current turn: ${boardEl.getAttribute('turn')}`;
+                }
             }
         }
 
