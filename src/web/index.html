@@ -159,15 +159,14 @@
                 this.#listeners = [];
             }
 
-            #generateRandom128Bits() {
-                const randomArray = new Uint8Array(15);
+            #generateRandomUInt64() {
+                const randomArray = new Uint8Array(8);
                 crypto.getRandomValues(randomArray);
                 let result = new BigNumber(0);
-                for (let i = 0; i < 14; i++) {
-                    result = result.plus(randomArray[i]);
+                for (let i = 0; i < 8; i++) {
                     result = result.multipliedBy(256);
+                    result = result.plus(randomArray[i]);
                 }
-                result = result.plus(randomArray[14]);
                 return result;
             }
 
@@ -197,7 +196,7 @@
             }
 
             createNewGame(circlesAddress) {
-                this.#gameId = this.#generateRandom128Bits();
+                this.#gameId = this.#generateRandomUInt64();
 
                 const call = this.#contract.methods.create_game(this.#gameId, circlesAddress);
                 return this.#getAccount()
@@ -459,7 +458,67 @@
         }
 
         class CreateNewGameDialog extends HTMLElement {
-            // TODO implement CreateNewGameDialog
+            #root;
+
+            constructor() {
+                super();
+                this.#root = new DocumentFragment();
+                const template = document.getElementById('create-new-game-dialog-initial');
+                const content = template.content.cloneNode(true);
+                this.#root.appendChild(content);
+
+                const circlesAddressInput = this.#root.getElementById('circlesAddressInput');
+                const submitButton = this.#root.querySelector('button[type="submit"]');
+                this.#root.querySelector('form').addEventListener('submit', event => {
+                    event.preventDefault();
+                    submitButton.setAttribute('disabled', 'true');
+                    this.dispatchEvent(new CustomEvent('submitted', {
+                        detail: {
+                            circlesAddress: circlesAddressInput.value,
+                        }
+                    }));
+                });
+            }
+
+            connectedCallback() {
+                this.appendChild(this.#root);
+            }
+
+            #setContentFromTemplate(templateId) {
+                const template = document.getElementById(templateId);
+                const content = template.content.cloneNode(true);
+                if (this.firstElementChild) {
+                    this.removeChild(this.firstElementChild);
+                }
+                this.appendChild(content);
+            }
+
+            static get observedAttributes() {
+                return ['state', 'gameid'];
+            }
+
+            #setGameId(gameId) {
+                const gameIdEl = this.querySelector('a');
+                if (gameIdEl) {
+                    const gameId = this.getAttribute('gameid');
+                    const link = `${location.origin}${location.pathname}?gameId=${gameId}`;
+                    gameIdEl.innerText = link;
+                    gameIdEl.href = link;
+                }
+            }
+
+            attributeChangedCallback(name, oldValue, newValue) {
+                if (name === 'state') {
+                    if (newValue === 'loading') {
+                        this.#setContentFromTemplate('create-new-game-dialog-loading');
+                    } else if (newValue === 'finished') {
+                        this.#setContentFromTemplate('create-new-game-dialog-finished');
+                        this.#setGameId(this.getAttribute('gameid'));
+                    }
+                } else if (name === 'gameid') {
+                    this.#setGameId(newValue);
+                }
+            }
         }
 
         class ErrorLogItem extends HTMLElement {
@@ -614,17 +673,25 @@
                 });
             } else {
                 const createNewGameDialog = document.createElement('create-new-game-dialog');
-                mainEl.appendChild(createNewGameDialog);
+                const modalContainer = document.querySelector('.modal');
+                const modal = new bootstrap.Modal(modalContainer, {
+                    keyboard: false,
+                });
+                modalContainer.querySelector('.modal-dialog').appendChild(createNewGameDialog);
+                modal.show();
+
+                createNewGameDialog.addEventListener('closed', () => modal.hide());
+                
                 createNewGameDialog.addEventListener('submitted', event => {
                     createNewGameDialog.setAttribute('state', 'loading');
                     contract.createNewGame(event.detail.circlesAddress).then(({ gameId }) => {
                         createNewGameDialog.setAttribute('state', 'finished');
-                        createNewGameDialog.setAttribute('game-id', gameId);
+                        createNewGameDialog.setAttribute('gameid', gameId.toString());
+                        const url = new URL(location.href);
+                        url.searchParams.set('gameId', gameId.toString());
+                        history.replaceState(null, null, url.toString());
                         boardEl.removeAttribute('disabled');
                     });
-                });
-                createNewGameDialog.addEventListener('closed', () => {
-                    mainEl.removeChild(createNewGameDialog);
                 });
             }
         });
@@ -672,6 +739,11 @@
         </div>
     </main>
 
+    <div class="modal" tabindex="-1" id="create-new-game-dialog-modal">
+        <div class="modal-dialog">
+        </div>
+    </div>
+
     <template id="tx-log-item">
         <li>
             <span></span>
@@ -712,7 +784,57 @@
         </style>
     </template>
 
-    <template id="create-new-game-dialog">
+    <template id="create-new-game-dialog-finished">
+        <div class="modal-content">
+            <div class="modal-body">
+                <i>✔️</i>
+                <span>Your game has been created. Send this link to the other player: <a href="#"></a></span>
+            </div>
+        </div>
+        <style>
+            i {
+                font-size: larger;
+            }
+        </style>
+    </template>
+
+    <template id="create-new-game-dialog-loading">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="spinner-border" role="status">
+                    <span class="sr-only">Loading...</span>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="create-new-game-dialog-initial">
+        <form class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create a new game of Tic-Tac-Toe</h5>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="circlesAddressInput" class="form-label">Opponent address</label>
+                    <input 
+                        type="text"
+                        class="form-control" 
+                        id="circlesAddressInput" 
+                        aria-describedby="circlesAddressInputHelp"
+                        pattern="0x([A-Fa-f0-9]+)"
+                        minlength="42"
+                        maxlength="42"
+                    >
+                    <small id="circlesAddressInputHelp" class="form-text text-muted">
+                        Wallet address of the person you want to play against.
+                        Or your own address if playing with yourself is more your thing.
+                    </small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn btn-primary">Create game</button>
+            </div>
+        </form>
     </template>
 
     <template id="tic-tac-toe-board">
